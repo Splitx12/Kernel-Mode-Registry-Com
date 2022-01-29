@@ -32,6 +32,9 @@ auto DriverUnload(
     }
 }
 
+#define MIN_ALTITUDE 360000
+#define MAX_ALTITUDE 389999
+
 auto DriverEntry(
     PDRIVER_OBJECT pDriverObject,
     PUNICODE_STRING pRegistryPath
@@ -61,8 +64,11 @@ auto DriverEntry(
         pKeyValueResultBuffer
     };
 
-    UNICODE_STRING AltitudeString = RTL_CONSTANT_STRING(L"367524");
+    UNICODE_STRING AltitudeString = RTL_CONSTANT_STRING(L"360000");
     
+    ULONG ulAltitudeStart = MIN_ALTITUDE;
+
+    NewAttitudeRetry:
     Status = CmRegisterCallbackEx
     (
         RegFilterRegistryCallback,
@@ -72,6 +78,15 @@ auto DriverEntry(
         &g_CmCookie,
         NULL
     );
+
+    while (Status == STATUS_FLT_INSTANCE_ALTITUDE_COLLISION && ulAltitudeStart >= MIN_ALTITUDE && ulAltitudeStart <= MAX_ALTITUDE)
+    {
+        ulAltitudeStart++;
+
+        RtlIntegerToUnicodeString(ulAltitudeStart, NULL, &AltitudeString);
+
+        goto NewAttitudeRetry;
+    }
 
     if (!NT_SUCCESS(Status))
     {

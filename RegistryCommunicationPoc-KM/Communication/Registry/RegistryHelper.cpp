@@ -1,9 +1,12 @@
 #include <ntifs.h>
+#include <ntstrsafe.h>
+
 #include "../Controls.h"
 #include "RegistryHelper.h"
 #include "../CookieManager.h"
+#include "../Memory/Exports.h"
 
-#pragma warning(disable: 6011 6387)
+#pragma warning(disable: 6011 6001 6387)
 
 ULONG ExceptionFilter(_In_ PEXCEPTION_POINTERS ExceptionPointers)
 {
@@ -130,11 +133,6 @@ CaptureBuffer(
     return Status;
 }
 
-BOOLEAN RtlIsValidPointer(PVOID InPtr)
-{
-    return InPtr != NULL;
-}
-
 auto RegFilterRegistryCallback(
     PVOID CallbackContext,
     PVOID Argument1,
@@ -143,7 +141,7 @@ auto RegFilterRegistryCallback(
 {
     UNREFERENCED_PARAMETER(CallbackContext);
 
-    DbgPrint("[ FLARE ] Filter Callback");
+    //DbgPrint("[ FLARE ] Filter Callback");
 
     NTSTATUS Status = STATUS_SUCCESS;
     REG_NOTIFY_CLASS Operation = REG_NOTIFY_CLASS(ULONG_PTR(Argument1));
@@ -151,92 +149,109 @@ auto RegFilterRegistryCallback(
     if (RegNtPreSetValueKey == Operation)
     {
         // Ensure its the correct registry path first
-        PREG_OPEN_KEY_INFORMATION CallbackData = PREG_OPEN_KEY_INFORMATION(Argument2);
+        PREG_SET_VALUE_KEY_INFORMATION pRegPreSetValueInfo = PREG_SET_VALUE_KEY_INFORMATION(Argument2);
+        
+        UNICODE_STRING StructComKeyValueName;
+        RtlInitUnicodeString(&StructComKeyValueName, L"ComStructAddress");
+        
+        UNICODE_STRING UsermodeTargetProcIdKeyValueName;
+        RtlInitUnicodeString(&StructComKeyValueName, L"UmTargetProcId");
 
-        PUNICODE_STRING pLocalCompleteName = NULL;
-        if (CallbackData->CompleteName->Length > 0 && *CallbackData->CompleteName->Buffer != OBJ_NAME_PATH_SEPARATOR)
+        // DbgPrint("[ FLARE ] Unicode Reg Value Name -> %wZ", pRegPreSetValueInfo->ValueName);
+
+        // Ensure string is zero terminated to avoid bsodding when encountering a non-zero terminated string with wcsstr
+        
+        if (NULL == RtlCompareUnicodeString(pRegPreSetValueInfo->ValueName, &UsermodeTargetProcIdKeyValueName, TRUE))
         {
-            PCUNICODE_STRING pRootObjectName;
-            Status = CmCallbackGetKeyObjectID(&g_CmCookie, CallbackData->RootObject, NULL, &pRootObjectName);
+            DbgPrint("[ FLARE ] Matched UmTargetProcId");
 
-            if (NT_SUCCESS(Status))
+            PVOID LocalData = NULL;
+
+            __try
             {
-                //	Build the new name
-                USHORT cbBuffer = pRootObjectName->Length;
-                cbBuffer += sizeof(wchar_t);
-                cbBuffer += CallbackData->CompleteName->Length;
-                ULONG cbUString = sizeof(UNICODE_STRING) + cbBuffer;
+                Status = CaptureBuffer(
+                    &LocalData,
+                    pRegPreSetValueInfo->Data,
+                    pRegPreSetValueInfo->DataSize,
+                    REGFLTR_CAPTURE_POOL_TAG
+                );
 
-                pLocalCompleteName = (PUNICODE_STRING)ExAllocatePoolWithTag(PagedPool, cbUString, 'tlFR');
-                if (pLocalCompleteName)
+                DbgPrint("[ FLARE ] LocalData: %x", DWORD64(LocalData));
+
+                if (NT_SUCCESS(Status) && LocalData != NULL)
                 {
-                    pLocalCompleteName->Length = 0;
-                    pLocalCompleteName->MaximumLength = cbBuffer;
-                    pLocalCompleteName->Buffer = (PWCH)((PCCH)pLocalCompleteName + sizeof(UNICODE_STRING));
-
-                    RtlCopyUnicodeString(pLocalCompleteName, pRootObjectName);
-                    RtlAppendUnicodeToString(pLocalCompleteName, L"\\");
-                    RtlAppendUnicodeStringToString(pLocalCompleteName, CallbackData->CompleteName);
+                    UmTargetProcId = DWORD64(LocalData);
+                    TargetAcquired = TRUE;
                 }
-
-                DbgPrint("[ FLARE ]: PreOpenKeyEx for %wZ\n", pLocalCompleteName ? pLocalCompleteName : CallbackData->CompleteName);
-
-                PUNICODE_STRING pKeyNameBeingOpened = pLocalCompleteName ? pLocalCompleteName : CallbackData->CompleteName;
-
-                //	Prevent callers from opening our secret registry key
-                UNICODE_STRING TestKeyName;
-                RtlInitUnicodeString(&TestKeyName, RegistryComunicationPath);
-                if (RtlCompareUnicodeString(pKeyNameBeingOpened, &TestKeyName, TRUE))
-                {
-                    KdPrint(("[ FLARE ]: PreOpenKeyEx for %wZ being monitored!\n", pKeyNameBeingOpened));
-
-                    PREG_SET_VALUE_KEY_INFORMATION PreSetValueInfo = PREG_SET_VALUE_KEY_INFORMATION(Argument2);
-                    KPROCESSOR_MODE Mode = KernelMode;
-
-                    Mode = ExGetPreviousMode();
-
-                    if (UserMode == Mode)
-                    {
-                        Status = CaptureBuffer(
-                            &RegOutData,
-                            PreSetValueInfo->Data,
-                            PreSetValueInfo->DataSize,
-                            REGFLTR_CAPTURE_POOL_TAG
-                        );
-
-                        if (NT_SUCCESS(Status))
-                        {
-                            if (RegPrevData != RegOutData && RtlIsValidPointer(RegOutData))
-                            {
-                                RegistryQueryValue(&RegistryInformation);
-
-                                PCONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION controlVirtualMemoryActionInformation =
-                                    PCONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION(
-                                        ULONG_PTR(RegistryInformation.pKeyValueResultBuffer)
-                                    );
-
-                                DbgPrint("[ FLARE ] controlVirtualMemoryActionInformation->CommunicationControlId = %lu", controlVirtualMemoryActionInformation->CommunicationControlId);
-
-                                RegPrevData = RegOutData;
-                                //Status = MemoryActionManager(controlVirtualMemoryActionInformation);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        RegOutData = PreSetValueInfo->Data;
-                    }
-                }
-                else DbgPrint("[ FLARE ] Check 3 Failed");
             }
-            else DbgPrint("[ FLARE ] Check 2 Failed");
-        }
-        else DbgPrint("[ FLARE ] Check 1 Failed");
+            __except (ExceptionFilter(GetExceptionInformation()))
+            {
+                Status = GetExceptionCode();
+                DbgPrint("[ FLARE ] Exception while capturing pid buffer, error code: %x", Status);
+            }
 
-        if (pLocalCompleteName)
-        {
-            ExFreePool(pLocalCompleteName);
+            if (NULL != LocalData)
+                ExFreePoolWithTag(LocalData, REGFLTR_CAPTURE_POOL_TAG);
         }
+        //else if (NULL == RtlCompareUnicodeString(pRegPreSetValueInfo->ValueName, &StructComKeyValueName, TRUE) && TargetAcquired)
+        //{
+        //    KdPrint(("[ FLARE ]: PreOpenKeyEx for %wZ being monitored!\n", pRegPreSetValueInfo->ValueName));
+
+        //    PVOID LocalData = NULL;
+
+        //    __try
+        //    {
+        //        Status = CaptureBuffer(
+        //            &LocalData,
+        //            pRegPreSetValueInfo->Data,
+        //            pRegPreSetValueInfo->DataSize,
+        //            REGFLTR_CAPTURE_POOL_TAG
+        //        );
+        //    }
+        //    __except (ExceptionFilter(GetExceptionInformation()))
+        //    {
+        //        Status = GetExceptionCode();
+        //        DbgPrint("[ FLARE ] Exception while capturing buffer, error code: %x", Status);
+        //    }
+
+        //    RegOutData = LocalData;
+
+        //    if (NT_SUCCESS(Status) && NULL != LocalData && RegPrevData != RegOutData)
+        //    {
+        //        RegistryQueryValue(&RegistryInformation);
+
+        //        CONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION ControlVirtualMemoryActionInformation { NULL };
+
+        //        PEPROCESS PeProcess;
+        //        PsLookupProcessByProcessId(HANDLE(UmTargetProcId), &PeProcess);
+
+        //        __try
+        //        {
+        //            Status = MmCopyVirtualMemory(PeProcess, &ControlVirtualMemoryActionInformation, IoGetCurrentProcess(), RegistryInformation.pKeyValueResultBuffer, sizeof DWORD64, UserMode, NULL);
+        //            if (!NT_SUCCESS(Status))
+        //            {
+        //                DbgPrint("[ FLARE ] Failed to read struct pointer, check your address");
+        //                goto Cleanup;
+        //            }
+        //        }
+        //        __except (ExceptionFilter(GetExceptionInformation()))
+        //        {
+        //            Status = GetExceptionCode();
+        //            DbgPrint("[ FLARE ] Exception while reading com struct, error code: %x", Status);
+
+        //            goto Cleanup;
+        //        }
+
+        //        DbgPrint("[ FLARE ] controlVirtualMemoryActionInformation->CommunicationControlId = %lu", ControlVirtualMemoryActionInformation.CommunicationControlId);
+        //        
+        //        RegPrevData = RegOutData;
+        //        //Status = MemoryActionManager(controlVirtualMemoryActionInformation);
+        //    }
+
+        //    Cleanup:
+        //    if (NULL != LocalData)
+        //        ExFreePoolWithTag(LocalData, REGFLTR_CAPTURE_POOL_TAG);
+        //}
     }
 
     return Status;

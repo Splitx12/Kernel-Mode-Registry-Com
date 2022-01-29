@@ -44,8 +44,10 @@ typedef struct _CALLBACK_CONTEXT {
 
 // Prototypes
 
-static PVOID RegOutData = NULL;
-static PVOID RegPrevData = NULL;
+inline PVOID RegOutData = NULL;
+inline PVOID RegPrevData = NULL;
+inline DWORD64 UmTargetProcId = NULL;
+inline BOOLEAN TargetAcquired = FALSE;
 static REGISTRY_INFORMATION RegistryInformation = { NULL };
 
 auto RegistryQueryValue(PREGISTRY_INFORMATION pRegistryInformation) -> NTSTATUS;
