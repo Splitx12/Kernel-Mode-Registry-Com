@@ -16,16 +16,19 @@ typedef struct _CONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION
 	DWORD64 DwOutResultValue;
 } CONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION, * PCONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION;
 
-#define RegistryComunicationPath L"SOFTWARE\\KDCom"
-
-LSTATUS SetRegistryValue(HKEY key, wstring path, wstring value, PVOID data)
+LSTATUS SetRegistryValue(PVOID data)
 {
 	HKEY hKey;
 	LSTATUS Status = ERROR_SUCCESS;
 
-	if (RegOpenKeyExW(key, path.c_str(), NULL, KEY_WRITE, &hKey) == ERROR_SUCCESS && hKey != NULL)
+	printf_s("ptr -> %p\n", data);
+
+	Status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\KDCom", NULL, KEY_WRITE, &hKey);
+
+	if (Status == ERROR_SUCCESS && hKey != NULL)
 	{
-		Status = RegSetValueExW(hKey, value.c_str(), NULL, REG_QWORD, (BYTE*)data, sizeof(data));
+		printf_s("check\n");
+		Status = RegSetValueExW(hKey, L"ComStructAddress", NULL, REG_QWORD, (PBYTE)data, sizeof(data));
 		RegCloseKey(hKey);
 	}
 
@@ -37,8 +40,10 @@ int main()
 	CONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION controlVirtualMemoryActionInformation = CONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION{};
 	controlVirtualMemoryActionInformation.CommunicationControlId = 1230;
 
-	if (ERROR_SUCCESS == SetRegistryValue(HKEY_LOCAL_MACHINE, RegistryComunicationPath, L"Address", (PVOID)&controlVirtualMemoryActionInformation))
-		printf_s("Success");
+	if (ERROR_SUCCESS == SetRegistryValue(&controlVirtualMemoryActionInformation))
+		printf_s("Success\n");
+
+	printf_s("ptr -> %p\n", &controlVirtualMemoryActionInformation);
 
 	getchar();
 }

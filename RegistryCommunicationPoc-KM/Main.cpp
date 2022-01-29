@@ -53,7 +53,7 @@ auto DriverEntry(
     RtlInitUnicodeString(&pUnicodeRegistryKeyValueName, L"ComStructAddress");
 
     PVOID pKeyValueResultBuffer = NULL;
-    REGISTRY_INFORMATION RegistryInformation = REGISTRY_INFORMATION{
+    RegistryInformation = REGISTRY_INFORMATION{
         &pUnicodeRegistryKeyFullPath,
         &pUnicodeRegistryKeyValueName,
         REG_QWORD,
@@ -61,40 +61,29 @@ auto DriverEntry(
         pKeyValueResultBuffer
     };
 
-    UNICODE_STRING AltitudeString = RTL_CONSTANT_STRING(L"360000");
+    UNICODE_STRING AltitudeString = RTL_CONSTANT_STRING(L"367524");
     
-    PVOID PreviousData = NULL;
+    Status = CmRegisterCallbackEx
+    (
+        RegFilterRegistryCallback,
+        &AltitudeString,
+        pDriverObject,
+        NULL,
+        &g_CmCookie,
+        NULL
+    );
 
-    while (TRUE)
+    if (!NT_SUCCESS(Status))
     {
-        Status = CmRegisterCallbackEx
-        (
-            RegFilterRegistryCallback,
-            &AltitudeString,
-            pDriverObject,
-            NULL,
-            &g_CmCookie,
-            NULL
-        );
-
-        if (!NT_SUCCESS(Status))
-        {
-            DbgPrint("[ FLARE ] Failed to register, most likely a critical failure, check if the driver initialization succeeded!");
-        }
-
-        if (PreviousData != RegOutData)
-        {
-            RegistryQueryValue(&RegistryInformation);
-    
-            PCONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION controlVirtualMemoryActionInformation =
-                PCONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION(
-                    ULONG_PTR(RegistryInformation.pKeyValueResultBuffer));
-    
-            DbgPrint("[ FLARE ] controlVirtualMemoryActionInformation->CommunicationControlId = %lu", controlVirtualMemoryActionInformation->CommunicationControlId);
-
-            //Status = MemoryActionManager(controlVirtualMemoryActionInformation);
-        }
+        if (Status == STATUS_FLT_INSTANCE_ALTITUDE_COLLISION)
+            DbgPrint("[ FLARE ] Altitude collision");
+        else if (Status == STATUS_INSUFFICIENT_RESOURCES)
+            DbgPrint("[ FLARE ] Failed to allocate memory");
+        else
+            DbgPrint("[ FLARE ] Failed to register");
     }
+
+    DbgPrint("[ FLARE ] Exiting");
 
     return Status;
 }

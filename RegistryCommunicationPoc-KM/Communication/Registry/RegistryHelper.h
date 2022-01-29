@@ -44,7 +44,10 @@ typedef struct _CALLBACK_CONTEXT {
 
 // Prototypes
 
+static PVOID RegOutData = NULL;
+static PVOID RegPrevData = NULL;
+static REGISTRY_INFORMATION RegistryInformation = { NULL };
+
 auto RegistryQueryValue(PREGISTRY_INFORMATION pRegistryInformation) -> NTSTATUS;
 
-static PVOID RegOutData = NULL;
 auto RegFilterRegistryCallback(PVOID CallbackContext, PVOID Argument1, PVOID Argument2) -> NTSTATUS;

@@ -130,6 +130,11 @@ CaptureBuffer(
     return Status;
 }
 
+BOOLEAN RtlIsValidPointer(PVOID InPtr)
+{
+    return InPtr != NULL;
+}
+
 auto RegFilterRegistryCallback(
     PVOID CallbackContext,
     PVOID Argument1,
@@ -137,6 +142,8 @@ auto RegFilterRegistryCallback(
 ) -> NTSTATUS
 {
     UNREFERENCED_PARAMETER(CallbackContext);
+
+    DbgPrint("[ FLARE ] Filter Callback");
 
     NTSTATUS Status = STATUS_SUCCESS;
     REG_NOTIFY_CLASS Operation = REG_NOTIFY_CLASS(ULONG_PTR(Argument1));
@@ -196,20 +203,36 @@ auto RegFilterRegistryCallback(
                             PreSetValueInfo->DataSize,
                             REGFLTR_CAPTURE_POOL_TAG
                         );
+
+                        if (NT_SUCCESS(Status))
+                        {
+                            if (RegPrevData != RegOutData && RtlIsValidPointer(RegOutData))
+                            {
+                                RegistryQueryValue(&RegistryInformation);
+
+                                PCONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION controlVirtualMemoryActionInformation =
+                                    PCONTROL_VIRTUAL_MEMORY_ACTION_INFORMATION(
+                                        ULONG_PTR(RegistryInformation.pKeyValueResultBuffer)
+                                    );
+
+                                DbgPrint("[ FLARE ] controlVirtualMemoryActionInformation->CommunicationControlId = %lu", controlVirtualMemoryActionInformation->CommunicationControlId);
+
+                                RegPrevData = RegOutData;
+                                //Status = MemoryActionManager(controlVirtualMemoryActionInformation);
+                            }
+                        }
                     }
                     else
                     {
                         RegOutData = PreSetValueInfo->Data;
                     }
                 }
+                else DbgPrint("[ FLARE ] Check 3 Failed");
             }
-            else
-            {
-                goto LExit;
-            }
+            else DbgPrint("[ FLARE ] Check 2 Failed");
         }
+        else DbgPrint("[ FLARE ] Check 1 Failed");
 
-    LExit:
         if (pLocalCompleteName)
         {
             ExFreePool(pLocalCompleteName);
